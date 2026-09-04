@@ -1,1 +1,40 @@
-d
+name: Build Beast .exe
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.26.3'
+
+    - name: Build Beast for Windows
+      working-directory: ./beast
+      run: |
+        go build -o Beast.exe -v
+
+    - name: Upload Beast.exe artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: Beast-Windows
+        path: ./beast/Beast.exe
+        retention-days: 30
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./beast/Beast.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,40 +1,32 @@
-name: Build Beast .exe
+name: beast exe
 
-on:
-  push:
-    branches: [ root ]
-  pull_request:
-    branches: [ root ]
-  workflow_dispatch:
+on: [push]
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Check out repository
+      uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
+    - name: Set up go
+      uses: actions/setup-python@v5
       with:
-        go-version: '1.26.3'
+        go-version: '2.16'
 
-    - name: Build Beast for Windows
-      working-directory: ./beast
+    - name: Install dependencies
       run: |
-        go build -o Beast.exe -v
+        pip install pyinstaller
+        # আপনার প্রজেক্টে অতিরিক্ত কোনো লাইব্রেরি লাগলে এখানে ইনস্টল করতে পারেন যেমন: pip install requests
 
-    - name: Upload Beast.exe artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: Beast-Windows
-        path: ./beast/Beast.exe
-        retention-days: 30
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --onefile main.py 
+        # খেয়াল রাখবেন: 'main.py' এর জায়গায় আপনার মূল পাইথন ফাইলের নাম হবে
 
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+    - name: Upload EXE artifact
+      uses: actions/upload-artifact@v4
       with:
-        files: ./beast/Beast.exe
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: Windows-Executable
+        path: dist/*.exe

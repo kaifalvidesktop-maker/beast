@@ -2,9 +2,9 @@ name: Build Beast .exe
 
 on:
   push:
-    branches: [ main ]
+    branches: [ root ]
   pull_request:
-    branches: [ main ]
+    branches: [ root ]
   workflow_dispatch:
 
 jobs:

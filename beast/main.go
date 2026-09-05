@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -26,11 +27,81 @@ type RAMHistory struct {
 
 var history = &RAMHistory{}
 
-// NavResult tells the JS shell what kind of content to load into the iframe
+// NavResult is returned to the calling page's JS as a quick ack.
+// The actual page change now happens via a real w.Navigate() call
+// (see navigateTo below) rather than by stuffing HTML into an iframe,
+// so the caller mostly just needs to know whether it was blocked.
 type NavResult struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
-	HTML string `json:"html"`
+	Blocked bool   `json:"blocked"`
+	URL     string `json:"url"`
+}
+
+// NavState tells the freshly-loaded chrome script what to show in the
+// toolbar (address bar text, enabled/disabled back/forward buttons).
+// This has to come from Go because every real navigation reloads the
+// whole page, wiping out any JS variables the previous page had.
+type NavState struct {
+	URL        string `json:"url"`
+	CanBack    bool   `json:"canBack"`
+	CanForward bool   `json:"canForward"`
+	TabID      int    `json:"tabId"`
+}
+
+// dataURI packages an internal HTML page as a base64 data: URL so it
+// can be given to w.Navigate() directly, the same way a real website
+// would be.
+func dataURI(html string) string {
+	return "data:text/html;charset=utf-8;base64," + base64.StdEncoding.EncodeToString([]byte(html))
+}
+
+// internalPageHTML maps a beast:// URL to the HTML that should be shown
+// for it. Returns ok=false for anything that isn't a known internal page.
+func internalPageHTML(beastURL string) (string, bool) {
+	switch beastURL {
+	case "beast://home":
+		return homePageHTML, true
+	case "beast://settings":
+		return settingsPageHTML, true
+	case "beast://bookmarks":
+		return bookmarksPageHTML, true
+	case "beast://downloads":
+		return downloadsPageHTML, true
+	case "beast://history":
+		return historyPageHTML, true
+	case "beast://shortcuts":
+		return shortcutsPageHTML, true
+	case "beast://about":
+		return aboutPageHTML, true
+	case "beast://site-settings":
+		return siteSettingsPageHTML, true
+	case "beast://cookies":
+		return cookiesPageHTML, true
+	case "beast://welcome":
+		return welcomePageHTML, true
+	case "beast://autofill":
+		return autofillPageHTML, true
+	case "beast://feedback":
+		return feedbackPageHTML, true
+	case "beast://passwords":
+		return passwordsPageHTML, true
+	case "beast://updates":
+		return updatesPageHTML, true
+	case "beast://backup":
+		return backupPageHTML, true
+	}
+	return "", false
+}
+
+// navigateTo performs the actual page change. It is used for internal
+// beast:// pages and real external URLs alike — there is no more
+// iframe, so "navigating" always means replacing the whole window's
+// content, exactly like a real browser tab does.
+func navigateTo(w webview.WebView, target string) {
+	if html, ok := internalPageHTML(target); ok {
+		w.Dispatch(func() { w.Navigate(dataURI(html)) })
+		return
+	}
+	w.Dispatch(func() { w.Navigate(target) })
 }
 
 // Add a new URL visit to RAM history
@@ -198,23 +269,23 @@ const homePageHTML = `
   <div class="top-sites" id="topSitesContainer"></div>
 
   <div class="history-controls">
-    <button onclick="parent.go('beast://history')">History</button>
-    <button onclick="parent.go('beast://bookmarks')">Bookmarks</button>
-    <button onclick="parent.go('beast://settings')">Settings</button>
+    <button onclick="go('beast://history')">History</button>
+    <button onclick="go('beast://bookmarks')">Bookmarks</button>
+    <button onclick="go('beast://settings')">Settings</button>
   </div>
 
 <script>
   function handleSearch() {
     const input = document.getElementById('searchBar').value;
     if (input.trim() === '') return;
-    parent.go(input);
+    go(input);
   }
 
   async function loadTopSites() {
-    const sites = await parent.window.getTopSites(4);
+    const sites = await window.getTopSites(4);
     const container = document.getElementById('topSitesContainer');
     container.innerHTML = sites.map(function(s) {
-      return '<div class="site" onclick="parent.go(\'' + s.URL + '\')">' + s.Domain + '</div>';
+      return '<div class="site" onclick="go(\'' + s.URL + '\')">' + s.Domain + '</div>';
     }).join('');
   }
   loadTopSites();
@@ -261,45 +332,33 @@ func main() {
 
 	w.Bind("realNavigate", func(input string) NavResult {
 		trimmed := strings.TrimSpace(input)
+		if trimmed == "" {
+			return NavResult{}
+		}
 
-		switch trimmed {
-		case "beast://home":
-			return NavResult{Type: "internal", URL: trimmed, HTML: homePageHTML}
-		case "beast://settings":
-			return NavResult{Type: "internal", URL: trimmed, HTML: settingsPageHTML}
-		case "beast://bookmarks":
-			return NavResult{Type: "internal", URL: trimmed, HTML: bookmarksPageHTML}
-		case "beast://downloads":
-			return NavResult{Type: "internal", URL: trimmed, HTML: downloadsPageHTML}
-		case "beast://history":
-			return NavResult{Type: "internal", URL: trimmed, HTML: historyPageHTML}
-		case "beast://shortcuts":
-			return NavResult{Type: "internal", URL: trimmed, HTML: shortcutsPageHTML}
-		case "beast://about":
-			return NavResult{Type: "internal", URL: trimmed, HTML: aboutPageHTML}
-		case "beast://site-settings":
-			return NavResult{Type: "internal", URL: trimmed, HTML: siteSettingsPageHTML}
-		case "beast://cookies":
-			return NavResult{Type: "internal", URL: trimmed, HTML: cookiesPageHTML}
-		case "beast://welcome":
-			return NavResult{Type: "internal", URL: trimmed, HTML: welcomePageHTML}
-		case "beast://autofill":
-			return NavResult{Type: "internal", URL: trimmed, HTML: autofillPageHTML}
-		case "beast://feedback":
-			return NavResult{Type: "internal", URL: trimmed, HTML: feedbackPageHTML}
-		case "beast://passwords":
-			return NavResult{Type: "internal", URL: trimmed, HTML: passwordsPageHTML}
-		case "beast://updates":
-			return NavResult{Type: "internal", URL: trimmed, HTML: updatesPageHTML}
-		case "beast://backup":
-			return NavResult{Type: "internal", URL: trimmed, HTML: backupPageHTML}
+		// Internal beast:// pages
+		if _, ok := internalPageHTML(trimmed); ok {
+			tab := tabManager.GetActiveTab()
+			if tab == nil {
+				tab = tabManager.NewTab(trimmed)
+			}
+			tabManager.RecordNavigation(tab.ID, trimmed)
+			navigateTo(w, trimmed)
+			return NavResult{URL: trimmed}
 		}
 
 		target := resolveInput(input)
 
 		if shield.ShouldBlock(target) {
 			domain := extractDomain(target)
-			return NavResult{Type: "internal", URL: target, HTML: buildBlockedPageHTML(domain)}
+			tab := tabManager.GetActiveTab()
+			if tab == nil {
+				tab = tabManager.NewTab(target)
+			}
+			blockedURL := "beast://blocked?" + domain
+			tabManager.RecordNavigation(tab.ID, blockedURL)
+			w.Dispatch(func() { w.Navigate(dataURI(buildBlockedPageHTML(domain))) })
+			return NavResult{Blocked: true, URL: target}
 		}
 
 		target = shield.EnforceHTTPS(target)
@@ -307,15 +366,21 @@ func main() {
 		tab := tabManager.GetActiveTab()
 		if tab == nil {
 			tab = tabManager.NewTab(target)
-		} else {
-			tabManager.UpdateTab(tab.ID, target, target)
 		}
+		tabManager.RecordNavigation(tab.ID, target)
 
 		if !incognito.IsActive() {
 			history.Add(target, target)
 		}
 
-		return NavResult{Type: "external", URL: target}
+		// This is a REAL top-level navigation now (w.Navigate), not an
+		// iframe src swap. That's the actual fix: most real sites
+		// (Google included) send X-Frame-Options / CSP headers that
+		// refuse to render inside anyone else's iframe, which is why
+		// search and general browsing used to fail with an error.
+		navigateTo(w, target)
+
+		return NavResult{URL: target}
 	})
 
 	// -------------------------------
@@ -324,6 +389,8 @@ func main() {
 
 	w.Bind("openNewTab", func() int {
 		tab := tabManager.NewTab("")
+		tabManager.RecordNavigation(tab.ID, "beast://home")
+		navigateTo(w, "beast://home")
 		return tab.ID
 	})
 
@@ -340,10 +407,64 @@ func main() {
 		sessionManager.RecordClosed(closedTitle, closedURL)
 		pinManager.Clear(id)
 		readerMode.Clear(id)
+
+		active := tabManager.GetActiveTab()
+		if active == nil {
+			tab := tabManager.NewTab("")
+			tabManager.RecordNavigation(tab.ID, "beast://home")
+			navigateTo(w, "beast://home")
+			return
+		}
+		target := active.URL
+		if target == "" {
+			target = "beast://home"
+		}
+		navigateTo(w, target)
 	})
 
 	w.Bind("switchTab", func(id int) {
-		tabManager.SwitchTab(id)
+		tab := tabManager.SwitchTab(id)
+		if tab == nil {
+			return
+		}
+		target := tab.URL
+		if target == "" {
+			target = "beast://home"
+		}
+		navigateTo(w, target)
+	})
+
+	w.Bind("goBackNav", func() {
+		tab := tabManager.GetActiveTab()
+		if tab == nil {
+			return
+		}
+		if url, ok := tabManager.GoBack(tab.ID); ok {
+			navigateTo(w, url)
+		}
+	})
+
+	w.Bind("goForwardNav", func() {
+		tab := tabManager.GetActiveTab()
+		if tab == nil {
+			return
+		}
+		if url, ok := tabManager.GoForward(tab.ID); ok {
+			navigateTo(w, url)
+		}
+	})
+
+	w.Bind("getNavState", func() NavState {
+		tab := tabManager.GetActiveTab()
+		if tab == nil {
+			return NavState{}
+		}
+		return NavState{
+			URL:        tab.URL,
+			CanBack:    tabManager.CanGoBack(tab.ID),
+			CanForward: tabManager.CanGoForward(tab.ID),
+			TabID:      tab.ID,
+		}
 	})
 
 	w.Bind("getAllTabsUI", func() []*Tab {
@@ -351,7 +472,7 @@ func main() {
 	})
 
 	w.Bind("updateTabTitle", func(id int, title string, url string) {
-		tabManager.UpdateTab(id, title, url)
+		tabManager.SetTitle(id, title)
 	})
 
 	// -------------------------------
@@ -1051,10 +1172,25 @@ func main() {
 	})
 
 	// -------------------------------
-	// LOAD THE BEAST SHELL (Toolbar + Tabs + iframe)
+	// PERSISTENT BROWSER CHROME (toolbar + tab strip)
+	//
+	// w.Init() registers a script that webview runs on EVERY page load,
+	// before that page's own scripts run. That's what lets us keep a
+	// toolbar/tabs UI even though we no longer keep everything inside
+	// one shell + iframe — each "tab" is now a real top-level
+	// navigation, and this script re-mounts the chrome on top of
+	// whatever loads (internal beast:// pages and real websites alike).
 	// -------------------------------
 
-	w.SetHtml(shellHTML)
+	w.Init(chromeInjectionJS)
+
+	// -------------------------------
+	// OPEN THE FIRST TAB
+	// -------------------------------
+
+	firstTab := tabManager.NewTab("beast://home")
+	tabManager.RecordNavigation(firstTab.ID, "beast://home")
+	w.Navigate(dataURI(homePageHTML))
 
 	w.Run()
 }

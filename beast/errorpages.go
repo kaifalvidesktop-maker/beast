@@ -56,7 +56,7 @@ const noInternetPageHTML = `
   <div class="icon">&#128225;</div>
   <h1>No Internet Connection</h1>
   <p>BEAST can't reach this page. Check your network connection and try again.</p>
-  <button onclick="parent.reload()">Try Again</button>
+  <button onclick="reload()">Try Again</button>
 </body>
 </html>
 `
@@ -86,7 +86,7 @@ const notFoundPageHTML = `
   <div class="icon">&#128269;</div>
   <h1>Page Not Found</h1>
   <p>BEAST couldn't find that page. It may have been moved or no longer exists.</p>
-  <button onclick="parent.goHome()">Go Home</button>
+  <button onclick="goHome()">Go Home</button>
 </body>
 </html>
 `

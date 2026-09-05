@@ -10,11 +10,13 @@ import (
 // ---------------------------------------------------
 
 type Tab struct {
-	ID        int
-	Title     string
-	URL       string
-	CreatedAt time.Time
-	IsActive  bool
+	ID         int
+	Title      string
+	URL        string
+	CreatedAt  time.Time
+	IsActive   bool
+	History    []string `json:"-"`
+	HistoryPos int      `json:"-"`
 }
 
 type TabManager struct {
@@ -115,6 +117,19 @@ func (tm *TabManager) UpdateTab(id int, title string, url string) {
 	}
 }
 
+// SetTitle updates just a tab's display title (used after a page loads
+// and the chrome script reports back a short title for the tab strip).
+func (tm *TabManager) SetTitle(id int, title string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	for _, t := range tm.Tabs {
+		if t.ID == id {
+			t.Title = title
+			return
+		}
+	}
+}
+
 // Get the currently active tab
 func (tm *TabManager) GetActiveTab() *Tab {
 	tm.mu.Lock()
@@ -141,4 +156,89 @@ func (tm *TabManager) CloseAllTabs() {
 	defer tm.mu.Unlock()
 	tm.Tabs = []*Tab{}
 	tm.ActiveID = 0
+}
+
+// ---------------------------------------------------
+// PER-TAB BACK/FORWARD HISTORY
+// (Needed because BEAST now does real top-level navigation
+// instead of loading pages inside an iframe, so nothing in
+// the page's own JS survives between navigations. The Go
+// side is the only place that can remember where a tab has
+// been.)
+// ---------------------------------------------------
+
+// RecordNavigation pushes a newly-visited URL onto a tab's history,
+// discarding any "forward" entries beyond the current position.
+func (tm *TabManager) RecordNavigation(id int, url string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	for _, t := range tm.Tabs {
+		if t.ID == id {
+			t.History = append(t.History[:t.HistoryPos+1], url)
+			t.HistoryPos = len(t.History) - 1
+			t.URL = url
+			return
+		}
+	}
+}
+
+// CanGoBack reports whether the tab has an earlier entry to go to.
+func (tm *TabManager) CanGoBack(id int) bool {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	for _, t := range tm.Tabs {
+		if t.ID == id {
+			return t.HistoryPos > 0
+		}
+	}
+	return false
+}
+
+// CanGoForward reports whether the tab has a later entry to go to.
+func (tm *TabManager) CanGoForward(id int) bool {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	for _, t := range tm.Tabs {
+		if t.ID == id {
+			return t.HistoryPos < len(t.History)-1
+		}
+	}
+	return false
+}
+
+// GoBack moves the tab's history pointer back one step and returns
+// the URL that should now be loaded.
+func (tm *TabManager) GoBack(id int) (string, bool) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	for _, t := range tm.Tabs {
+		if t.ID == id {
+			if t.HistoryPos <= 0 {
+				return "", false
+			}
+			t.HistoryPos--
+			t.URL = t.History[t.HistoryPos]
+			return t.URL, true
+		}
+	}
+	return "", false
+}
+
+// GoForward moves the tab's history pointer forward one step and
+// returns the URL that should now be loaded.
+func (tm *TabManager) GoForward(id int) (string, bool) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	for _, t := range tm.Tabs {
+		if t.ID == id {
+			if t.HistoryPos >= len(t.History)-1 {
+				return "", false
+			}
+			t.HistoryPos++
+			t.URL = t.History[t.HistoryPos]
+			return t.URL, true
+		}
+	}
+	return "", false
 }

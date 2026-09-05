@@ -44,33 +44,33 @@ const contextMenuJS = `
 
 		if (linkEl) {
 			addItem('Open Link in New Tab', function() {
-				parent.openLinkInNewTab(linkEl.href);
+				window.openLinkInNewTab(linkEl.href);
 			});
 			addItem('Copy Link Address', function() {
 				navigator.clipboard.writeText(linkEl.href);
 			});
 			addItem('Download Link', function() {
-				parent.downloadFile(linkEl.href);
+				window.downloadFile(linkEl.href);
 			});
 		}
 
 		if (imgEl) {
 			addItem('Open Image in New Tab', function() {
-				parent.openLinkInNewTab(imgEl.src);
+				window.openLinkInNewTab(imgEl.src);
 			});
 			addItem('Save Image As', function() {
-				parent.downloadFile(imgEl.src);
+				window.downloadFile(imgEl.src);
 			});
 		}
 
-		addItem('Back', function() { parent.goBack(); });
-		addItem('Forward', function() { parent.goForward(); });
-		addItem('Reload', function() { parent.reload(); });
+		addItem('Back', function() { goBack(); });
+		addItem('Forward', function() { goForward(); });
+		addItem('Reload', function() { reload(); });
 
 		var sel = window.getSelection().toString();
 		if (sel && sel.trim() !== '') {
 			addItem('Search Google for "' + (sel.length > 20 ? sel.slice(0,20) + '...' : sel) + '"', function() {
-				parent.go(sel);
+				go(sel);
 			});
 			addItem('Copy', function() {
 				navigator.clipboard.writeText(sel);
@@ -78,7 +78,7 @@ const contextMenuJS = `
 		}
 
 		addItem('Inspect', function() {
-			parent.openDevTools();
+			window.openDevTools();
 		});
 
 		document.body.appendChild(menu);

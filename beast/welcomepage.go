@@ -72,7 +72,7 @@ const welcomePageHTML = `
     </div>
   </div>
 
-  <button class="start-btn" onclick="parent.go('beast://home')">Start Browsing</button>
+  <button class="start-btn" onclick="go('beast://home')">Start Browsing</button>
 </body>
 </html>
 `
